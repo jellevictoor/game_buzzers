@@ -7,6 +7,7 @@ import board
 import digitalio
 import espnow
 import neopixel
+from client_name import name
 
 RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
@@ -20,7 +21,7 @@ DISABLED = 3
 ENABLED = 4
 BUTTON_PRESSED = 5
 
-name = 'BLUE'
+
 client_status = STARTUP
 
 esp_now_connection = espnow.ESPNow()
