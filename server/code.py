@@ -6,18 +6,28 @@ import time
 import board
 import espnow
 import neopixel
+import usb_cdc
 import wifi
+
+def log_to_serial(message):
+    if usb_cdc.data:
+        usb_cdc.data.write(b"LOG: {0}\n".format(message))
+
+    if usb_cdc.console:
+        print(message)
+
 
 led_bar_size = 6
 led_bar = neopixel.NeoPixel(board.RX, led_bar_size)
-status_pixel = led_bar[0]
+
 broadcast_pixel = led_bar[1]
 player_pixels = led_bar[2:]
+status_pixel = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.2)
 
 my_mac = wifi.radio.mac_address
 my_mac_str = ":".join(["{:02x}".format(b) for b in my_mac])
 game_id = str(random.random())
-print(f"I'm the server and this is my MAC address: {my_mac_str}")
+log_to_serial(f"I'm the server and this is my MAC address: {my_mac_str}")
 broadcast_mac = b'\xff\xff\xff\xff\xff\xff'
 
 esp_now_connection = espnow.ESPNow()
@@ -69,6 +79,21 @@ async def update_leds():
             index = 0
 
 
+def handle_serial_data():
+    while True:
+        if usb_cdc.data and usb_cdc.data.in_waiting > 0:
+            # Read the incoming message
+            message = usb_cdc.data.readline().decode().strip()
+            log_to_serial(f"Received: {message}")
+
+            # Send a response
+            response = f"Echo: {message}"
+            usb_cdc.data.write(response.encode() + b'\n')
+            log_to_serial(f"Sent: {response}")
+        usb_cdc.data.write("test")
+        time.sleep(1)
+
+
 async def broadcast_mac_address(interval):
     while True:
         led_bar[1] = (255, 0, 0)
@@ -97,7 +122,7 @@ async def receive_messages():
         if packet:
             message = json.loads(packet.msg.decode('UTF-8'))
             if "action" in message:
-                print("received action", message["action"])
+                log_to_serial("received action", message["action"])
                 if message["action"] == "request_registration":
                     player_name = message['name']
                     mac_address = packet.mac
@@ -117,15 +142,15 @@ async def receive_messages():
 
 
 async def register_player(mac_address, player_name, known_macs) -> int:
-    print("received registration request from ", player_name)
+    log_to_serial("received registration request from ", player_name)
     if not mac_address in known_macs:
         players.append(Player(mac_address, player_name))
         known_macs.append(mac_address)
 
     player_peer = register_peer(mac_address)
-    print("sending registration ack")
+    log_to_serial("sending registration ack")
     esp_now_connection.send(json.dumps({"action": "registration_ack"}).encode('UTF-8'), peer=player_peer)
-    print("Player ", player_name, " registered and has index ", len(players) - 1)
+    log_to_serial("Player ", player_name, " registered and has index ", len(players) - 1)
     player_index = [player.mac_address for player in players].index(mac_address)
     players[player_index].last_seen = time.time()
     return player_index
@@ -133,6 +158,7 @@ async def register_player(mac_address, player_name, known_macs) -> int:
 
 async def ping_players():
     while True:
+        log_to_serial("Pinging " + str(len(players)) + " players")
         for player in players:
             player_peer = register_peer(player.mac_address)
             esp_now_connection.send(json.dumps({"action": "ping"}).encode('UTF-8'), peer=player_peer)
@@ -151,13 +177,27 @@ async def update_player_status():
         await asyncio.sleep(1)
 
 
+
 async def main():
+    global status_pixel
     broadcast_task = asyncio.create_task(broadcast_mac_address(5))  # Broadcast every 5 seconds
     receive_task = asyncio.create_task(receive_messages())
     led_task = asyncio.create_task(update_leds())
     ping_task = asyncio.create_task(ping_players())
     update_player_status_task = asyncio.create_task(update_player_status())
-    await asyncio.gather(broadcast_task, receive_task, led_task, ping_task, update_player_status_task)
+    try:
+        status_pixel.fill((0, 255, 0))
+        led_bar.fill((0, 0, 0))
+        led_bar.show()
+        status_pixel.show()
+        log_to_serial("Starting main loop")
+        await asyncio.gather(broadcast_task, receive_task, led_task, ping_task, update_player_status_task)
+    except BaseException as e:
+        log_to_serial("Shutting down because of an exception {0}".format(e))
+        led_bar.fill((0, 0, 0))
+        led_bar.show()
+        esp_now_connection.deinit()
+        raise e
 
 
 asyncio.run(main())
