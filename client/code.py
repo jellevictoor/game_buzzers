@@ -7,6 +7,7 @@ import board
 import digitalio
 import espnow
 import neopixel
+
 from client_name import name
 
 RED = (255, 0, 0)
@@ -20,7 +21,6 @@ REGISTERED = 2
 DISABLED = 3
 ENABLED = 4
 BUTTON_PRESSED = 5
-
 
 client_status = STARTUP
 
@@ -39,18 +39,18 @@ print("buzzer ", name, " started")
 blink_color = RED
 
 
-async def blink():
+async def blink(refresh_interval):
     global blink_color
     while True:
         pixel.fill(blink_color)
         pixel.show()
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(refresh_interval)
         pixel.fill((0, 0, 0))
         pixel.show()
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(refresh_interval)
 
 
-async def receive_messages():
+async def receive_messages(refresh_interval):
     global blink_color
     global client_status
     global game_server_peer
@@ -76,8 +76,6 @@ async def receive_messages():
 
             decoded_message = packet.msg.decode('UTF-8')
             message = json.loads(decoded_message)
-
-
 
             if "action" in message:
                 action = message["action"]
@@ -115,24 +113,22 @@ async def receive_messages():
                     continue
 
                 if action == "disable":
-                    if client_status == REGISTERED:
-                        client_status == DISABLED
+                    client_status == DISABLED
                     continue
 
                 if action == "enable":
-                    if client_status == REGISTERED:
-                        client_status == ENABLED
+                    client_status == ENABLED
                     continue
 
             print("unknown packet ", packet)
-        await asyncio.sleep(0.001)
+        await asyncio.sleep(refresh_interval)
 
 
-async def button_listener():
+async def button_listener(refresh_interval):
     global client_status
     global button_light
     while True:
-        await asyncio.sleep(0.001)  # avoid starvation
+        await asyncio.sleep(refresh_interval)  # avoid starvation
 
         if client_status == DISABLED:
             button_light.value = False
@@ -154,9 +150,10 @@ async def button_listener():
 
 
 async def main():
-    receive_task = asyncio.create_task(receive_messages())
-    button_pushed_task = asyncio.create_task(button_listener())
-    status_task = asyncio.create_task(blink())
+    refresh_interval = 0.001
+    receive_task = asyncio.create_task(receive_messages(refresh_interval))
+    button_pushed_task = asyncio.create_task(button_listener(refresh_interval))
+    status_task = asyncio.create_task(blink(0.2))
     await asyncio.gather(
         receive_task,
         button_pushed_task,

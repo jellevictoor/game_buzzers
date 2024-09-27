@@ -9,6 +9,7 @@ import neopixel
 import usb_cdc
 import wifi
 
+
 def log_to_serial(message):
     if usb_cdc.data:
         usb_cdc.data.write(b"LOG: {0}\n".format(message))
@@ -18,7 +19,7 @@ def log_to_serial(message):
 
 
 led_bar_size = 6
-led_bar = neopixel.NeoPixel(board.RX, led_bar_size)
+led_bar = neopixel.NeoPixel(board.RX, led_bar_size, brightness=0.2)
 
 broadcast_pixel = led_bar[1]
 player_pixels = led_bar[2:]
@@ -37,7 +38,8 @@ esp_now_connection.peers.append(broadcast_peer)
 packets = []
 
 players = []
-BRIGHTNESS = 50
+players_per_mac = {}
+BRIGHTNESS = 0.2
 PLAYER_COLORS = {
     "RED": (255, 0, 0, BRIGHTNESS),
     "GREEN": (0, 255, 0, BRIGHTNESS),
@@ -47,17 +49,30 @@ PLAYER_COLORS = {
 
 
 class Player:
-    def __init__(self, mac_address, name):
+    def __init__(self, mac_address, name, player_index):
         self.mac_address = mac_address
         self.name = name
+        self.player_index = player_index
         self.last_seen = time.time()
+
+        self.peer = None
+        self.enabled = False
+
+    def enable(self):
+        self.enabled = True
+
+    def disable(self):
+        self.enabled = False
+
+    def set_peer(self, peer):
+        self.peer = peer
 
     def __str__(self):
         return f"Player {self.name} with MAC address {self.mac_address}"
 
     def get_color(self):
         name = self.name.upper()
-        return PLAYER_COLORS.get(name, (255, 255, 255, BRIGHTNESS))
+        return PLAYER_COLORS.get(name, (255, 255, 255))
 
     def is_online(self):
         return (time.time() - self.last_seen) < 10
@@ -79,19 +94,47 @@ async def update_leds():
             index = 0
 
 
-def handle_serial_data():
+async def receive_serial_message(refresh_time):
     while True:
-        if usb_cdc.data and usb_cdc.data.in_waiting > 0:
+        input_serial_connection = usb_cdc.console
+        if input_serial_connection and input_serial_connection.in_waiting > 0:
             # Read the incoming message
-            message = usb_cdc.data.readline().decode().strip()
+            message = input_serial_connection.readline().decode().strip()
             log_to_serial(f"Received: {message}")
+            try:
+                message = json.loads(message)
+                for player_index in message['enable']:
+                    if player_index >= len(players):
+                        log_to_serial(f"Invalid player index {player_index}")
+                        continue
+                    led_bar[player_index + 2] = players[player_index].get_color()
+                    led_bar.show()
+                    await asyncio.sleep(1)
+                    led_bar[player_index + 2] = (0, 0, 0)
+                    led_bar.show()
+                    await asyncio.sleep(1)
+                    led_bar[player_index + 2] = players[player_index].get_color()
+                    led_bar.show()
+                    esp_now_connection.send(json.dumps({"action": "enable"}).encode('utf-8'),
+                                            peer=players[player_index].peer)
+                for player_index in message['disable']:
+                    if player_index >= len(players):
+                        log_to_serial(f"Invalid player index {player_index}")
+                        continue
+                    led_bar[player_index + 2] = players[player_index].get_color()
+                    led_bar.show()
+                    await asyncio.sleep(1)
+                    led_bar[player_index + 2] = (0, 0, 0)
+                    led_bar.show()
+                    await asyncio.sleep(1)
+                    led_bar[player_index + 2] = players[player_index].get_color()
+                    led_bar.show()
+                    esp_now_connection.send(json.dumps({"action": "disable"}).encode('utf-8'),
+                                            peer=players[player_index].peer)
+            except ValueError:
+                log_to_serial("Invalid JSON received {0}".format(message))
 
-            # Send a response
-            response = f"Echo: {message}"
-            usb_cdc.data.write(response.encode() + b'\n')
-            log_to_serial(f"Sent: {response}")
-        usb_cdc.data.write("test")
-        time.sleep(1)
+        await asyncio.sleep(refresh_time)
 
 
 async def broadcast_mac_address(interval):
@@ -115,50 +158,73 @@ def register_peer(mac_address):
     return player_peer
 
 
-async def receive_messages():
-    known_macs = []
+def disable_other_players(player):
+    for other_player in [player for player in players if player != player]:
+        esp_now_connection.send(json.dumps({"action": "disable"}).encode('utf-8'), peer=other_player.peer)
+
+
+async def receive_wireless_message(refresh_time):
     while True:
         packet = esp_now_connection.read()
         if packet:
             message = json.loads(packet.msg.decode('UTF-8'))
             if "action" in message:
-                log_to_serial("received action", message["action"])
+                log_to_serial("received action {0}".format(message["action"]))
                 if message["action"] == "request_registration":
                     player_name = message['name']
                     mac_address = packet.mac
 
-                    player_index = await register_player(mac_address, player_name, known_macs)
+                    player_index = await register_player(mac_address, player_name)
                     led_bar[player_index + 2] = players[player_index].get_color()
                     led_bar.show()
                     continue
 
                 if message["action"] == "pong":
                     mac_address = packet.mac
-                    player_index = [player.mac_address for player in players].index(mac_address)
+                    player_index = players_per_mac[mac_address].player_index
                     players[player_index].last_seen = time.time()
                     continue
 
-        await asyncio.sleep(0.1)
+                if message["action"] == "pressed":
+                    mac_address = packet.mac
+                    player = players_per_mac[mac_address]
+                    log_to_serial("Player {0} has pressed!".format(player.name))
+                    disable_other_players(player)
+                    usb_cdc.console.write(json.dumps({"buzzer": player_index + 1}).encode() + b'\n')
+                    led_bar[0] = player.get_color()
+                    led_bar.show()
+                    await asyncio.sleep(1)
+                    led_bar[0] = (0, 0, 0)
+                    led_bar.show()
+
+                    continue
+
+        await asyncio.sleep(refresh_time)
 
 
-async def register_player(mac_address, player_name, known_macs) -> int:
-    log_to_serial("received registration request from ", player_name)
-    if not mac_address in known_macs:
-        players.append(Player(mac_address, player_name))
-        known_macs.append(mac_address)
+async def register_player(mac_address, player_name) -> int:
+    log_to_serial("received registration request from {0}".format(player_name))
+    if not mac_address in players_per_mac.keys():
+        player = Player(mac_address, player_name, len(players))
+        player_peer = register_peer(mac_address)
+        player.set_peer(player_peer)
+        players.append(player)
+        players_per_mac[mac_address] = player
 
-    player_peer = register_peer(mac_address)
+    player = players_per_mac[mac_address]
+
     log_to_serial("sending registration ack")
-    esp_now_connection.send(json.dumps({"action": "registration_ack"}).encode('UTF-8'), peer=player_peer)
-    log_to_serial("Player ", player_name, " registered and has index ", len(players) - 1)
-    player_index = [player.mac_address for player in players].index(mac_address)
-    players[player_index].last_seen = time.time()
-    return player_index
+    esp_now_connection.send(json.dumps({"action": "registration_ack"}).encode('UTF-8'), peer=player.peer)
+
+    log_to_serial("Player {0} registered and has index {1}".format(player_name, player.player_index))
+    player.last_seen = time.time()
+
+    return player.player_index
 
 
 async def ping_players():
     while True:
-        log_to_serial("Pinging " + str(len(players)) + " players")
+        log_to_serial("Pinging {0} players".format(len(players)))
         for player in players:
             player_peer = register_peer(player.mac_address)
             esp_now_connection.send(json.dumps({"action": "ping"}).encode('UTF-8'), peer=player_peer)
@@ -177,13 +243,15 @@ async def update_player_status():
         await asyncio.sleep(1)
 
 
-
 async def main():
     global status_pixel
+    refresh_interval = 0.01
     broadcast_task = asyncio.create_task(broadcast_mac_address(5))  # Broadcast every 5 seconds
-    receive_task = asyncio.create_task(receive_messages())
+    receive_task = asyncio.create_task(receive_wireless_message(refresh_interval))
     led_task = asyncio.create_task(update_leds())
     ping_task = asyncio.create_task(ping_players())
+    handle_serial_data_task = asyncio.create_task(receive_serial_message(refresh_interval))
+
     update_player_status_task = asyncio.create_task(update_player_status())
     try:
         status_pixel.fill((0, 255, 0))
@@ -191,9 +259,10 @@ async def main():
         led_bar.show()
         status_pixel.show()
         log_to_serial("Starting main loop")
-        await asyncio.gather(broadcast_task, receive_task, led_task, ping_task, update_player_status_task)
+        await asyncio.gather(broadcast_task, receive_task, led_task, ping_task, update_player_status_task,
+                             handle_serial_data_task)
     except BaseException as e:
-        log_to_serial("Shutting down because of an exception {0}".format(e))
+        log_to_serial("Shutting down because of an exception {0}".format(str(e)))
         led_bar.fill((0, 0, 0))
         led_bar.show()
         esp_now_connection.deinit()
