@@ -21,6 +21,7 @@ REGISTERED = 2
 DISABLED = 3
 ENABLED = 4
 BUTTON_PRESSED = 5
+button_pressed_time = None
 
 client_status = STARTUP
 
@@ -127,6 +128,7 @@ async def receive_messages(refresh_interval):
 async def button_listener(refresh_interval):
     global client_status
     global button_light
+    global button_pressed_time
     while True:
         await asyncio.sleep(refresh_interval)  # avoid starvation
 
@@ -142,10 +144,13 @@ async def button_listener(refresh_interval):
                 esp_now_connection.send(json.dumps({"action": "pressed", "name": name}).encode('UTF-8'),
                                         peer=game_server_peer)
                 client_status = BUTTON_PRESSED
+                button_pressed_time = time()
             continue
 
         if client_status == BUTTON_PRESSED:
             button_light.value = False
+            if time() - button_pressed_time > 0.1:
+                client_status = ENABLED
             continue
 
 
