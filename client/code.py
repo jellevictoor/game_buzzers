@@ -180,11 +180,11 @@ async def update_button_status(status):
 
 async def main():
     refresh_interval = 0.001
-    receive_task = asyncio.create_task(receive_messages(refresh_interval))
+    receive_messages_task = asyncio.create_task(receive_messages(refresh_interval))
     button_pushed_task = asyncio.create_task(button_listener(refresh_interval))
     status_task = asyncio.create_task(blink(0.2))
     await asyncio.gather(
-        receive_task,
+        receive_messages_task,
         button_pushed_task,
         status_task)
 

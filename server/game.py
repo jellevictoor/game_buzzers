@@ -1,7 +1,7 @@
+import asyncio
 import time
 
-import board
-import usb_cdc
+import neopixel
 
 PLAYER_COLORS = {
     "RED": (255, 0, 0),
@@ -11,21 +11,11 @@ PLAYER_COLORS = {
 }
 
 
-class SerialListener:
-    def __init__(self):
-        self.serial = usb_cdc.console
-
-    def listen(self):
-        pass
-
-
 class Game:
     def __init__(self):
         self.players = []
         self.players_per_mac = {}
-        self.led_bar = LedBar(None)
         self.current_player = None
-        self.serial_console = None
 
     def add_player(self, player):
         self.players.append(player)
@@ -97,10 +87,39 @@ class LedBar:
     def __init__(self, pin):
         self.color = None
         self.size = 6
-        self.pin = board.MOSI
+        self.pin = pin
+        self.neopixels = neopixel.NeoPixel(pin, self.size)
 
-    def set_color(self, color):
+    def set_all_pixels(self, color):
         self.color = color
+        self.neopixels.fill(self.color)
+        self.neopixels.show()
+
+    def flash(self, times, color):
+        asyncio.create_task(self._flash(times, color))
+
+
+    def flash_player(self, player_index, color):
+        asyncio.create_task(self._flash_player(player_index, color))
+
+    async def _flash(self, times, color, index=None):
+        for i in range(times):
+            if index is None:
+                self.set_all_pixels(color)
+            else:
+                await self.set_led_color(color, index)
+            await asyncio.sleep(0.5)
+
+            if index is None:
+                self.set_all_pixels((0,0,0))
+            else:
+                await self.set_led_color(color, index)
+
+            await asyncio.sleep(0.5)
+
+    async def set_led_color(self, color, index):
+        self.neopixels[index] = color
+        self.neopixels.show()
 
 
 class Player:

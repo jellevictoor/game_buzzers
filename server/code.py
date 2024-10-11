@@ -11,6 +11,7 @@ import usb_cdc
 import wifi
 
 from game import Game
+from game import LedBar
 
 my_mac = wifi.radio.mac_address
 my_mac_str = ":".join(["{:02x}".format(b) for b in my_mac])
@@ -176,6 +177,9 @@ async def button_listener(game: Game):
 async def main():
     usb_cdc.console.write_timeout = 1
     game = Game()
+    led_bar = LedBar(pin=board.MOSI)
+    led_bar.set_all_pixels((0, 0, 255))
+    led_bar.flash(2, (0, 255, 0))
     communication_task = asyncio.create_task(communication_handler(game))
     player_management_task = asyncio.create_task(player_management(game))
     button_task = asyncio.create_task(button_listener(game))
