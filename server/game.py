@@ -82,7 +82,7 @@ class Game:
 class LedBar:
     BROADCAST_INDEX = 0
     PING_INDEX = 1
-    PLAYER_INDEX = [2, 3, 4, 5]
+    PLAYER_INDEX = [5, 4, 3, 2]
 
     def __init__(self, pin):
         self.color = None
@@ -98,26 +98,34 @@ class LedBar:
     def flash(self, times, color):
         asyncio.create_task(self._flash(times, color))
 
-
     def flash_player(self, player_index, color):
         asyncio.create_task(self._flash_player(player_index, color))
+
+    def set_player_status(self, player_index: int, player_color: tuple[3]):
+        led_index_mapping = self.PLAYER_INDEX[player_index]
+        self.set_led_color(player_color, led_index_mapping)
+
+    async def _flash_player(self, player_index, color):
+        led_index_mapping = self.PLAYER_INDEX[player_index]
+        await self._flash(2, color, led_index_mapping)
+        self.set_led_color(color, led_index_mapping)
 
     async def _flash(self, times, color, index=None):
         for i in range(times):
             if index is None:
                 self.set_all_pixels(color)
             else:
-                await self.set_led_color(color, index)
+                self.set_led_color(color, index)
             await asyncio.sleep(0.5)
 
             if index is None:
-                self.set_all_pixels((0,0,0))
+                self.set_all_pixels((0, 0, 0))
             else:
-                await self.set_led_color(color, index)
+                self.set_led_color((0, 0, 0), index)
 
             await asyncio.sleep(0.5)
 
-    async def set_led_color(self, color, index):
+    def set_led_color(self, color, index):
         self.neopixels[index] = color
         self.neopixels.show()
 

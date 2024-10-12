@@ -64,7 +64,7 @@ def register_peer_with_espnow(mac_address):
     return player_peer
 
 
-async def handle_wireless_message(packet, game):
+async def handle_wireless_message(packet, game:Game,led_bar:LedBar):
     message = json.loads(packet.msg.decode('UTF-8'))
     if "action" in message:
         print("received action {0}".format(message["action"]))
@@ -72,10 +72,11 @@ async def handle_wireless_message(packet, game):
         if message["action"] == "request_registration":
             player_name = message['name']
 
-            game.register_player(mac_address, player_name)
+            player = game.register_player(mac_address, player_name)
 
             player_peers[mac_address] = register_peer_with_espnow(mac_address)
             esp_now_connection.send(json.dumps({"action": "registration_ack"}).encode('UTF-8'), peer=player_peers[mac_address])
+            led_bar.flash_player(player.player_index, player.get_color())
             return
 
         if message["action"] == "pong":
@@ -95,7 +96,7 @@ async def handle_wireless_message(packet, game):
             return
 
 
-async def player_management(game: Game):
+async def player_management(game:Game, led_bar:LedBar):
     last_ping = time.time()
     while True:
         if time.time() - last_ping > 6:
@@ -106,17 +107,20 @@ async def player_management(game: Game):
 
             last_ping = time.time()
 
+        for player in game.players:
+            led_bar.set_player_status(player.player_index,player.get_color() if player.is_online() else (0,0,0))
+
         await asyncio.sleep(0.1)  # Adjust this interval as needed
 
 
-async def communication_handler(game: Game) -> None:
+async def communication_handler(game: Game, led_bar:LedBar) -> None:
     last_broadcast = time.time()
     while True:
         try:
             # Handle wireless messages
             packet = esp_now_connection.read()
             if packet:
-                await handle_wireless_message(packet, game)
+                await handle_wireless_message(packet, game, led_bar)
 
             # Handle serial messages
             if usb_cdc.console and usb_cdc.console.in_waiting > 0:
@@ -180,8 +184,8 @@ async def main():
     led_bar = LedBar(pin=board.MOSI)
     led_bar.set_all_pixels((0, 0, 255))
     led_bar.flash(2, (0, 255, 0))
-    communication_task = asyncio.create_task(communication_handler(game))
-    player_management_task = asyncio.create_task(player_management(game))
+    communication_task = asyncio.create_task(communication_handler(game, led_bar))
+    player_management_task = asyncio.create_task(player_management(game, led_bar))
     button_task = asyncio.create_task(button_listener(game))
     try:
 
