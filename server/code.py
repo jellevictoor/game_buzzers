@@ -6,7 +6,6 @@ import time
 import board
 import digitalio
 import espnow
-import neopixel
 import usb_cdc
 import wifi
 
@@ -24,6 +23,7 @@ broadcast_peer = espnow.Peer(mac=broadcast_mac, channel=1)
 esp_now_connection.peers.append(broadcast_peer)
 player_peers = {}
 
+
 async def receive_serial_message(game, message):
     print(f"Received: {message}")
     try:
@@ -34,11 +34,13 @@ async def receive_serial_message(game, message):
 
         players_to_enable = game.enable_players(message["enable"])
         for player in players_to_enable:
-            esp_now_connection.send(json.dumps({"action": "enable"}).encode('utf-8'), peer=player_peers[player.mac_address])
+            esp_now_connection.send(json.dumps({"action": "enable"}).encode('utf-8'),
+                                    peer=player_peers[player.mac_address])
 
         players_to_disable = game.disable_players(message["disable"])
         for player in players_to_disable:
-            esp_now_connection.send(json.dumps({"action": "disable"}).encode('utf-8'), peer=player_peers[player.mac_address])
+            esp_now_connection.send(json.dumps({"action": "disable"}).encode('utf-8'),
+                                    peer=player_peers[player.mac_address])
 
     except ValueError:
         print("Invalid JSON received {0}".format(message))
@@ -64,7 +66,7 @@ def register_peer_with_espnow(mac_address):
     return player_peer
 
 
-async def handle_wireless_message(packet, game:Game,led_bar:LedBar):
+async def handle_wireless_message(packet, game: Game, led_bar: LedBar):
     message = json.loads(packet.msg.decode('UTF-8'))
     if "action" in message:
         print("received action {0}".format(message["action"]))
@@ -75,7 +77,8 @@ async def handle_wireless_message(packet, game:Game,led_bar:LedBar):
             player = game.register_player(mac_address, player_name)
 
             player_peers[mac_address] = register_peer_with_espnow(mac_address)
-            esp_now_connection.send(json.dumps({"action": "registration_ack"}).encode('UTF-8'), peer=player_peers[mac_address])
+            esp_now_connection.send(json.dumps({"action": "registration_ack"}).encode('UTF-8'),
+                                    peer=player_peers[mac_address])
             led_bar.flash_player(player.player_index, player.get_color())
             return
 
@@ -96,10 +99,10 @@ async def handle_wireless_message(packet, game:Game,led_bar:LedBar):
             return
 
 
-async def player_management(game:Game, led_bar:LedBar):
-    last_ping = time.time()
+async def player_management(game: Game, led_bar: LedBar):
+    last_ping = None
     while True:
-        if time.time() - last_ping > 6:
+        if last_ping is None or time.time() - last_ping > 6:
             print(f"Pinging {len(player_peers)} players")
 
             for player_peer in player_peers.values():
@@ -108,13 +111,13 @@ async def player_management(game:Game, led_bar:LedBar):
             last_ping = time.time()
 
         for player in game.players:
-            led_bar.set_player_status(player.player_index,player.get_color() if player.is_online() else (0,0,0))
+            led_bar.set_player_status(player.player_index, player.get_color() if player.is_online() else (0, 0, 0))
 
         await asyncio.sleep(0.1)  # Adjust this interval as needed
 
 
-async def communication_handler(game: Game, led_bar:LedBar) -> None:
-    last_broadcast = time.time()
+async def communication_handler(game: Game, led_bar: LedBar) -> None:
+    last_broadcast = None
     while True:
         try:
             # Handle wireless messages
@@ -132,7 +135,7 @@ async def communication_handler(game: Game, led_bar:LedBar) -> None:
                     print(f"Error processing serial message: {str(e)}")
 
             # Broadcast MAC address
-            if time.time() - last_broadcast > 4:
+            if last_broadcast is None or time.time() - last_broadcast > 4:
                 await broadcast_mac_address()
                 last_broadcast = time.time()
 
@@ -158,7 +161,8 @@ async def button_listener(game: Game):
             for player in players:
                 print(f"Enabling player {player.name}")
                 print(player)
-                esp_now_connection.send(json.dumps({"action": "enable"}).encode('utf-8'), peer=player_peers[player.mac_address])
+                esp_now_connection.send(json.dumps({"action": "enable"}).encode('utf-8'),
+                                        peer=player_peers[player.mac_address])
 
             continue
 
@@ -182,8 +186,6 @@ async def main():
     usb_cdc.console.write_timeout = 1
     game = Game()
     led_bar = LedBar(pin=board.MOSI)
-    led_bar.set_all_pixels((0, 0, 255))
-    led_bar.flash(2, (0, 255, 0))
     communication_task = asyncio.create_task(communication_handler(game, led_bar))
     player_management_task = asyncio.create_task(player_management(game, led_bar))
     button_task = asyncio.create_task(button_listener(game))

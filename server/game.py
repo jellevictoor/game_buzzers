@@ -89,43 +89,62 @@ class LedBar:
         self.size = 6
         self.pin = pin
         self.neopixels = neopixel.NeoPixel(pin, self.size)
+        self.neopixels.brightness = 0.1
+        self.waiting = True
+        asyncio.create_task(self._show_waiting())
 
-    def set_all_pixels(self, color):
+
+    def _set_all_pixels(self, color):
         self.color = color
         self.neopixels.fill(self.color)
         self.neopixels.show()
+
+    async def _show_waiting(self):
+        index = 0
+        direction = 1
+        while self.waiting:
+            self._set_all_pixels((0, 0, 0))
+            self._set_led_color((255, 128, 0), index)
+            await asyncio.sleep(0.1)
+            index = index + direction
+            if index == self.size -1 :
+                direction = -1
+            if index == 0:
+                direction = 1
+        self._set_all_pixels((0, 0, 0))
 
     def flash(self, times, color):
         asyncio.create_task(self._flash(times, color))
 
     def flash_player(self, player_index, color):
-        asyncio.create_task(self._flash_player(player_index, color))
+        asyncio.create_task(self._flash_player(color, player_index))
 
     def set_player_status(self, player_index: int, player_color: tuple[3]):
+        self.waiting = False
         led_index_mapping = self.PLAYER_INDEX[player_index]
-        self.set_led_color(player_color, led_index_mapping)
+        self._set_led_color(player_color, led_index_mapping)
 
-    async def _flash_player(self, player_index, color):
+    async def _flash_player(self, color, player_index):
         led_index_mapping = self.PLAYER_INDEX[player_index]
         await self._flash(2, color, led_index_mapping)
-        self.set_led_color(color, led_index_mapping)
+        self._set_led_color(color, led_index_mapping)
 
     async def _flash(self, times, color, index=None):
         for i in range(times):
             if index is None:
-                self.set_all_pixels(color)
+                self._set_all_pixels(color)
             else:
-                self.set_led_color(color, index)
+                self._set_led_color(color, index)
             await asyncio.sleep(0.5)
 
             if index is None:
-                self.set_all_pixels((0, 0, 0))
+                self._set_all_pixels((0, 0, 0))
             else:
-                self.set_led_color((0, 0, 0), index)
+                self._set_led_color((0, 0, 0), index)
 
             await asyncio.sleep(0.5)
 
-    def set_led_color(self, color, index):
+    def _set_led_color(self, color, index):
         self.neopixels[index] = color
         self.neopixels.show()
 
